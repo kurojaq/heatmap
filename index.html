@@ -300,4 +300,142 @@ function setPulse(){const hm=document.getElementById('hm');hm.classList.toggle('
 pulseBtn.onclick=()=>{pulseOn=!pulseOn;setPulse();};
 render(); applyZoom(); setPulse();
 </script>
+<style>
+.chips{overflow:visible;align-items:flex-start}
+.dd{position:relative;display:inline-block}
+.dd-btn{display:inline-flex;align-items:center;gap:7px;cursor:pointer;user-select:none;border:.5px solid var(--line2);border-radius:7px;padding:6px 11px;font-size:10px;letter-spacing:.07em;text-transform:uppercase;color:var(--cream);background:var(--panel2)}
+.dd-btn:hover{border-color:#6c6c74;color:var(--cream)}
+.dd.open .dd-btn{border-color:#9a9aa0;color:var(--cream)}
+.dd-btn .cnt{background:var(--gold);color:var(--ink,#16160f);border-radius:9px;min-width:15px;text-align:center;padding:0 5px;font-size:9px;font-style:normal;font-weight:700}
+.dd-btn .cnt.z{background:#3a3a42;color:var(--dim)}
+.dd-btn .car{color:var(--dim);font-size:9px}
+.dd-panel{position:absolute;z-index:40;top:calc(100% + 5px);left:0;min-width:215px;max-height:50vh;overflow:auto;background:#15151a;border:.5px solid var(--line2);border-radius:9px;padding:5px;display:none;box-shadow:0 12px 30px rgba(0,0,0,.55)}
+.dd.open .dd-panel{display:block}
+.dd-allnone{display:flex;gap:6px;padding:3px 5px 6px;border-bottom:.5px solid #2c2c32;margin-bottom:3px}
+.dd-allnone button{flex:1;background:#26262c;color:#c9c4b8;border:.5px solid #3a3a42;border-radius:5px;padding:3px;font-size:9px;cursor:pointer;text-transform:uppercase;letter-spacing:.05em}
+.dd-allnone button:hover{color:var(--cream);border-color:#6c6c74}
+.dd-item{display:flex;align-items:center;gap:9px;padding:5px 8px;border-radius:6px;cursor:pointer;font-size:11px;color:var(--cream)}
+.dd-item:hover{background:#26262c}
+.dd-item input{accent-color:var(--gold);width:13px;height:13px;cursor:pointer;flex:none}
+.dd-item .gtag{margin-left:auto;color:#6c6c74;font-size:9px}
+.meta.surf{margin-top:6px}
+.meta.surf select,.meta.surf input{background:#1c1c21;color:#e8e3d6;border:.5px solid var(--line2);border-radius:5px;padding:3px 6px;font:inherit;font-size:11px}
+.meta.surf input{font-variant-numeric:tabular-nums}
+.meta.surf .dteauto{color:var(--dim);font-variant-numeric:tabular-nums;font-size:10px;letter-spacing:.02em}
+.meta.surf button{background:var(--panel2);color:#e8e3d6;border:.5px solid var(--line2);border-radius:5px;padding:3px 9px;cursor:pointer;font-size:10px;text-transform:uppercase;letter-spacing:.05em}
+.meta.surf button:hover{background:#1c1c21;border-color:#6c6c74}
+</style>
+<script>
+/* ===== Deep Strike — Greeks & IV Surface engine (Black-76 forward measure) + grouped pickers ===== */
+const INSTR={NQ:{mult:20},MNQ:{mult:2},ES:{mult:50},MES:{mult:5},RTY:{mult:50},
+ YM:{mult:5},ZN:{mult:1000},ZB:{mult:1000},ZF:{mult:1000},CL:{mult:1000},
+ GC:{mult:100},SI:{mult:5000},'6E':{mult:125000}};
+M.mult=(INSTR[M.inst]&&INSTR[M.inst].mult)||20;
+const _ncdf=x=>{const a1=.254829592,a2=-.284496736,a3=1.421413741,a4=-1.453152027,a5=1.061405429,p=.3275911;
+  const s=x<0?-1:1;x=Math.abs(x)/Math.SQRT2;const t=1/(1+p*x);
+  const y=1-(((((a5*t+a4)*t)+a3)*t+a2)*t+a1)*t*Math.exp(-x*x);return .5*(1+s*y);};
+const _npdf=x=>Math.exp(-x*x/2)/Math.sqrt(2*Math.PI);
+const ATM_EST=0.15;
+function surfaceRow(K,sig,F,T,r,Mult,coi,po,cprem,pprem){
+  const o={lmon:null,ivmid:null,ndd:null,ddl:null,gexc:null,charm:null,vanna:null,volga:null,zomma:null,spd2:null,pcpar:null,dq:null};
+  const have=(typeof sig==='number'&&sig>0);const s=have?sig:ATM_EST;o.ivmid=s;o.dq=have?2:0;
+  if(K>0&&F>0)o.lmon=Math.log(K/F);
+  if(s>0&&T>0&&K>0&&F>0){const sqT=Math.sqrt(T),v=s*sqT,df=Math.exp(-r*T);
+    const d1=(Math.log(F/K)+.5*s*s*T)/v,d2=d1-v;const Nd1=_ncdf(d1),nd1=_npdf(d1);
+    const dCall=df*Nd1,dPut=df*(Nd1-1);const gamma=df*nd1/(F*v);const vegaRaw=F*df*nd1*sqT;
+    const co=coi||0,pp=po||0;
+    o.ndd=dPut*pp-dCall*co;o.ddl=o.ndd*Mult*F;o.gexc=gamma*(co+pp)*F*F*Mult/100;
+    o.charm=-df*nd1*((d1-v)/(2*T)-((r+.5*s*s)*d1)/v)/365;
+    o.vanna=-df*nd1*d2/s;o.volga=vegaRaw*d1*d2/s;o.zomma=gamma*(d1*d2-1)/s;o.spd2=-gamma/F*(d1/v+1);
+    if(typeof cprem==='number'&&typeof pprem==='number')o.pcpar=cprem-pprem-(F-K)*df;}
+  return o;
+}
+function effectiveDTEdays(){const n=new Date();const t=new Date(n.getFullYear(),n.getMonth(),n.getDate()+1,0,0,0,0);return (t-n)/86400000;}
+// ---- register surface columns (additive; off by default) ----
+const NEWM=[['lmon','Log-Moneyness','surface',true],['ivmid','IV Mid (resolved)','surface',false],
+ ['ndd','Net Dlr Delta','surface',true],['ddl','Dollar Delta','surface',true],['gexc','GEX Contrib','surface',true],
+ ['charm','Charm','surface',true],['vanna','Vanna','surface',true],['volga','Volga','surface',false],
+ ['zomma','Zomma','surface',true],['spd2','Speed','surface',true],['pcpar','PC-Parity Err','surface',true],
+ ['dq','Data Quality','surface',false]];
+const NABBR={lmon:'LMON',ivmid:'IVm',ndd:'NDD',ddl:'$DLT',gexc:'GEXc',charm:'CHRM',vanna:'VANA',volga:'VOLG',zomma:'ZOMA',spd2:'SPD2',pcpar:'PCPE',dq:'DQ'};
+for(const m of NEWM){M.metrics.push(m);MET[m[0]]=m;}
+Object.assign(ABBR,NABBR);
+order.push(...NEWM.map(m=>m[0]));
+function rescaleDerived(){
+  for(const [id,,,signed] of NEWM){
+    const vs=ROWS.map(r=>r[id]).filter(v=>typeof v==='number');
+    if(!vs.length){scale[id]=null;continue;}
+    if(signed){const m=pct(vs.map(Math.abs),.95)||Math.max(1,...vs.map(Math.abs));scale[id]={signed:true,m:m||1};}
+    else{let lo=pct(vs,.05),hi=pct(vs,.95);if(!(hi>lo))hi=lo+1;
+      const llo=Math.log(Math.max(lo,1e-9)),lhi=Math.log(Math.max(hi,1e-9));scale[id]={signed:false,llo,lhi:(lhi>llo?lhi:llo+1)};}
+  }
+}
+// ---- 4 grouped checkbox dropdowns (replace flat chip bar; same location) ----
+const GROUPS=[['strike','Strike'],['dealer','Dealer'],['greeks','Greeks'],['surface','Surface']];
+function updateCounts(){
+  document.querySelectorAll('.dd').forEach(dd=>{
+    const grp=dd.dataset.grp,n=M.metrics.filter(m=>m[2]===grp&&on.has(m[0])).length;
+    const c=dd.querySelector('.cnt');c.textContent=n;c.classList.toggle('z',n===0);});
+}
+function buildDropdowns(){
+  chips.innerHTML='';
+  for(const [grp,label] of GROUPS){
+    const items=M.metrics.filter(m=>m[2]===grp); if(!items.length)continue;
+    const dd=document.createElement('div');dd.className='dd';dd.dataset.grp=grp;
+    let rows='';
+    for(const [id,lab,g,signed] of items)
+      rows+='<label class="dd-item"><input type="checkbox" data-id="'+id+'"'+(on.has(id)?' checked':'')+'><span>'+lab+'</span><span class="gtag">'+(signed?'\u00b1':'')+'</span></label>';
+    dd.innerHTML='<button class="dd-btn"><span>'+label+'</span><i class="cnt">0</i><span class="car">\u25be</span></button>'
+      +'<div class="dd-panel"><div class="dd-allnone"><button data-act="all">all</button><button data-act="none">none</button></div>'+rows+'</div>';
+    chips.appendChild(dd);
+  }
+  document.querySelectorAll('.dd').forEach(dd=>{
+    const btn=dd.querySelector('.dd-btn');
+    btn.onclick=e=>{e.stopPropagation();const wasOpen=dd.classList.contains('open');
+      document.querySelectorAll('.dd').forEach(x=>x.classList.remove('open'));if(!wasOpen)dd.classList.add('open');};
+    dd.querySelector('.dd-panel').onclick=e=>e.stopPropagation();
+    dd.querySelectorAll('.dd-item input').forEach(cb=>cb.onchange=()=>{
+      const id=cb.dataset.id;cb.checked?on.add(id):on.delete(id);updateCounts();render();});
+    dd.querySelectorAll('.dd-allnone button').forEach(b=>b.onclick=e=>{e.stopPropagation();
+      const act=b.dataset.act,grp=dd.dataset.grp;
+      M.metrics.filter(m=>m[2]===grp).forEach(m=>act==='all'?on.add(m[0]):on.delete(m[0]));
+      dd.querySelectorAll('.dd-item input').forEach(cb=>cb.checked=on.has(cb.dataset.id));
+      updateCounts();render();});
+  });
+  updateCounts();
+}
+document.addEventListener('click',()=>document.querySelectorAll('.dd').forEach(x=>x.classList.remove('open')));
+buildDropdowns();
+// ---- surface input bar ----
+const _meta=document.getElementById('meta');
+const _bar=document.createElement('div');_bar.className='meta surf';_bar.id='surfbar';
+let _opts='';for(const k in INSTR)_opts+='<option value="'+k+'"'+(k===M.inst?' selected':'')+'>'+k+'</option>';
+_bar.innerHTML='<span>instrument</span> <select id="instSel">'+_opts+'</select>'
+ +'<span>r&nbsp;(%)</span> <input id="rfr" type="number" step="0.05" style="width:60px">'
+ +'<span>fwd&nbsp;F</span> <input id="fwd" type="number" step="5" style="width:88px">'
+ +'<span>DTE&nbsp;(d)</span> <input id="dteOv" type="number" step="0.05" placeholder="auto" style="width:64px">'
+ +'<b id="dteAuto" class="dteauto"></b>'
+ +'<button id="surfReset" title="reset surface inputs to defaults">reset</button>';
+_meta.insertAdjacentElement('afterend',_bar);
+const instSel=document.getElementById('instSel'),rfrEl=document.getElementById('rfr'),
+ fwdEl=document.getElementById('fwd'),dteOvEl=document.getElementById('dteOv'),dteAutoEl=document.getElementById('dteAuto');
+const RFR_DEF=3.7;
+rfrEl.value=RFR_DEF; fwdEl.value=M.anchor;
+function recomputeSurface(){
+  const inst=instSel.value,Mult=(INSTR[inst]&&INSTR[inst].mult)||M.mult;M.mult=Mult;
+  const r=(parseFloat(rfrEl.value)||0)/100;
+  const F=parseFloat(fwdEl.value)||M.anchor;
+  const ov=parseFloat(dteOvEl.value);
+  const days=(isFinite(ov)&&ov>0)?ov:effectiveDTEdays();
+  const T=days/365;
+  dteAutoEl.textContent=(isFinite(ov)&&ov>0?'manual ':'auto ')+days.toFixed(4)+' d \u00b7 T='+T.toExponential(2)+' yr \u00b7 mult '+Mult;
+  for(const row of ROWS) Object.assign(row,surfaceRow(row.k,row.iv,F,T,r,Mult,row.coi,row.poi,row.cprem,row.pprem));
+  rescaleDerived(); render();
+}
+instSel.onchange=recomputeSurface; rfrEl.oninput=recomputeSurface; fwdEl.oninput=recomputeSurface; dteOvEl.oninput=recomputeSurface;
+document.getElementById('surfReset').onclick=()=>{instSel.value=M.inst;rfrEl.value=RFR_DEF;fwdEl.value=M.anchor;dteOvEl.value='';recomputeSurface();};
+setInterval(()=>{if(!(isFinite(parseFloat(dteOvEl.value))&&parseFloat(dteOvEl.value)>0))recomputeSurface();},60000);
+recomputeSurface();
+</script>
+
 </body></html>
