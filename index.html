@@ -366,7 +366,8 @@ function surfaceRow(K,sig,F,T,r,Mult,coi,po,cprem,pprem){
 function _etOffMin(date){const dtf=new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',hour12:false,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'});const P={};for(const p of dtf.formatToParts(date))P[p.type]=p.value;let hh=+P.hour%24;const asUTC=Date.UTC(+P.year,+P.month-1,+P.day,hh,+P.minute,+P.second);return (asUTC-date.getTime())/60000;}
 function _et5pmTs(y,m,d){const g=Date.UTC(y,m-1,d,17,0,0);return g-_etOffMin(new Date(g))*60000;}
 function _expParts(){const e=(M.exp||'').match(/(\d{1,2})\/(\d{1,2})\/(\d{2})/);if(e)return{y:2000+ +e[3],m:+e[1],d:+e[2]};const dd=(document.getElementById('dayDate')||{}).value||'';const x=dd.match(/^(\d{4})-(\d{2})-(\d{2})$/);if(x)return{y:+x[1],m:+x[2],d:+x[3]};return null;}
-function effectiveDTEdays(){const p=_expParts();if(!p){const n=new Date();return (new Date(n.getFullYear(),n.getMonth(),n.getDate(),17,0,0)-n)/86400000;}return (_et5pmTs(p.y,p.m,p.d)-Date.now())/86400000;}
+function _busDaysBetween(c,p){let a=Date.UTC(c.y,c.m-1,c.d),b=Date.UTC(p.y,p.m-1,p.d);if(b===a)return 0;const s=b>a?1:-1;let n=0,t=a;while(s>0?t<b:t>b){t+=s*86400000;const wd=new Date(t).getUTCDay();if(wd!==0&&wd!==6)n+=s;}return n;}
+function effectiveDTEdays(){const p=_expParts();if(!p)return null;const m=sessionDateNow().match(/(\d{4})-(\d{2})-(\d{2})/);const c={y:+m[1],m:+m[2],d:+m[3]};const frac=1-sessionTnow();return frac+_busDaysBetween(c,p);}
 function splitCSV(line){const o=[];let c='',q=false;for(let i=0;i<line.length;i++){const ch=line[i];
   if(ch=='"'){q=!q;}else if(ch==','&&!q){o.push(c);c='';}else c+=ch;}o.push(c);return o;}
 function num(s){if(s==null)return null;s=(''+s).replace(/[",\s]/g,'').replace(/s$/,'');
@@ -385,14 +386,14 @@ function expFromName(n){const x=(''+n).match(/exp(\d{2})_(\d{2})_(\d{2})/);retur
 function dateFromName(n){const all=(''+n).match(/\d{8}/g);if(!all)return null;const d=all[all.length-1];return d.slice(4,8)+'-'+d.slice(0,2)+'-'+d.slice(2,4);}
 // ---- housing keyed by [inst][date][exp] ----
 window.__qStore=window.__qStore||{};
-function store(inst,date){const i=__qStore[inst]||(__qStore[inst]={});return i[date]||(i[date]={chain:null,greeks:null,anchor:null,exp:null,date});}
+function store(inst,date){const i=__qStore[inst]||(__qStore[inst]={});return i[date]||(i[date]={chain:null,greeks:null,anchor:null,anchorLocked:false,exp:null,date});}
 function rowsFromStore(inst,date){const s=__qStore[inst]&&__qStore[inst][date];if(!s||!s.chain||!s.greeks)return null;
   const ks=new Set();for(const k in s.book)ks.add(+k);for(const k in s.greeks)ks.add(+k);
   return [...ks].sort((a,b)=>a-b).map(k=>{const b=s.book[k]||{},g=s.greeks[k]||{};
     return {k,coi:b.coi,poi:b.poi,cprem:b.cprem,pprem:b.pprem,cvol:b.cvol,pvol:b.pvol,iv:g.iv,dlta:g.dlta,gama:g.gama,vega:g.vega,thta:g.thta};});}
 const BAKED_ROWS=ROWS.map(r=>Object.assign({},r));
 const BAKED_META={inst:M.inst,exp:M.exp,anchor:M.anchor,atm:M.atm};
-function computeATM(){let best=null,bd=Infinity;for(const r of ROWS){const d=Math.abs(r.k-M.anchor);if(d<bd){bd=d;best=r.k;}}if(best!=null)M.atm=best;}
+function computeATM(){if(M.anchor==null||!isFinite(M.anchor)){M.atm=null;return;}let best=null,bd=Infinity;for(const r of ROWS){const d=Math.abs(r.k-M.anchor);if(d<bd){bd=d;best=r.k;}}if(best!=null)M.atm=best;}
 const NEWM=[['lmon','Log-Moneyness','surface',true],['ivmid','IV Mid (resolved)','surface',false],
  ['ndd','Net Dlr Delta','surface',true],['ddl','Dollar Delta','surface',true],['gexc','GEX Contrib','surface',true],
  ['charm','Charm','surface',true],['vanna','Vanna','surface',true],['volga','Volga','surface',false],
@@ -448,24 +449,28 @@ const instSel=$('instSel'),anchorIn=$('anchorIn'),anchorLock=$('anchorLock'),day
  rfrEl=$('rfr'),dteAutoEl=$('dteAuto'),atmOut=$('atmOut'),spotEl=$('spot');
 const RFR_DEF=3.7;rfrEl.value=RFR_DEF;anchorIn.value=M.anchor;
 let anchorLocked=false;const BAKED_EXP=BAKED_META.exp;const BAKED_DATE='2026-06-19';
-function syncSpot(){if(spotEl)spotEl.value=M.anchor;}
+function setLockUI(){anchorLock.classList.toggle('on',anchorLocked);anchorLock.textContent=anchorLocked?'\uD83D\uDD12':'\uD83D\uDD13';anchorLock.title=anchorLocked?'Anchor locked for this date \u2014 click to unlock':'Lock anchor for this date';}
+function applyAnchorState(inst,date){const cell=(__qStore[inst]&&__qStore[inst][date])||null;const a=(cell&&cell.anchor!=null&&isFinite(cell.anchor))?cell.anchor:null;anchorLocked=!!(cell&&cell.anchorLocked&&a!=null);if(a!=null){M.anchor=a;anchorIn.value=a;}else{M.anchor=null;anchorIn.value='';}setLockUI();syncSpot();}
+function syncSpot(){if(spotEl)spotEl.value=(M.anchor!=null&&isFinite(M.anchor))?M.anchor:'';}
 function activeDate(){return dayDate.value||sessionDateNow();}
-function blankState(){ROWS.length=0;M.exp='';M.atm=null;atmOut.textContent='\u2014';const _d=effectiveDTEdays();dteAutoEl.textContent=(_d>0?_d.toFixed(3)+'d':'expired');rescaleAll();render();}
+function blankState(){ROWS.length=0;M.exp='';M.atm=null;atmOut.textContent='\u2014';const _d=effectiveDTEdays();dteAutoEl.textContent=(_d==null?'\u2014':(_d>0?_d.toFixed(3)+'d':'expired'));rescaleAll();render();}
 function recomputeSurface(){
   const inst=instSel.value,Mult=(INSTR[inst]&&INSTR[inst].mult)||M.mult;M.mult=Mult;
-  const r=(parseFloat(rfrEl.value)||0)/100,F=M.anchor,days=effectiveDTEdays(),T=Math.max(days,0)/365;
-  dteAutoEl.textContent=(days>0?days.toFixed(3)+'d':'expired');atmOut.textContent=M.atm;
-  for(const row of ROWS)Object.assign(row,surfaceRow(row.k,row.iv,F,T,r,Mult,row.coi,row.poi,row.cprem,row.pprem));
+  const r=(parseFloat(rfrEl.value)||0)/100,F=M.anchor,days=effectiveDTEdays(),T=Math.max(days||0,0)/252;
+  dteAutoEl.textContent=(days==null?'\u2014':(days>0?days.toFixed(3)+'d':'expired'));atmOut.textContent=(M.atm!=null?M.atm:'\u2014');
+  const okF=(F!=null&&isFinite(F)&&F>0);
+  for(const row of ROWS)Object.assign(row,okF?surfaceRow(row.k,row.iv,F,T,r,Mult,row.coi,row.poi,row.cprem,row.pprem):{lmon:null,ivmid:null,ndd:null,ddl:null,gexc:null,charm:null,vanna:null,volga:null,zomma:null,spd2:null,pcpar:null,dq:null});
   rescaleDerived();render();}
 function applyRows(rows,inst,exp,src){ROWS.length=0;for(const r of rows)ROWS.push(r);M.inst=inst;M.exp=exp;
   computeATM();rescaleAll();srcTag.textContent=src;syncSpot();recomputeSurface();}
-function restoreBaked(){if(!anchorLocked){M.anchor=BAKED_META.anchor;anchorIn.value=M.anchor;}
+function restoreBaked(){const cell=store(BAKED_META.inst,BAKED_DATE);if(cell.anchor==null)cell.anchor=BAKED_META.anchor;applyAnchorState(BAKED_META.inst,BAKED_DATE);
   applyRows(BAKED_ROWS.map(r=>Object.assign({},r)),BAKED_META.inst,BAKED_EXP,'engine bake \u00b7 '+BAKED_DATE+' \u00b7 full fields');}
 function applyStore(inst,date){const rows=rowsFromStore(inst,date);if(!rows){blankState();srcTag.textContent='no session loaded \u00b7 '+date;return;}
-  const s=__qStore[inst][date];if(s.anchor&&!anchorLocked){M.anchor=s.anchor;anchorIn.value=s.anchor;}
+  const s=__qStore[inst][date];
   applyRows(rows,inst,s.exp||'','uploaded \u00b7 '+date+(s.exp?(' \u00b7 exp '+s.exp):'')+' \u00b7 chain+greeks (strike/dealer/PDSL = engine)');}
 function loadDate(){const inst=instSel.value,date=activeDate();
   if(inst===BAKED_META.inst&&date===BAKED_DATE){restoreBaked();return;}
+  applyAnchorState(inst,date);
   const s=__qStore[inst]&&__qStore[inst][date];
   if(s&&s.chain&&s.greeks){applyStore(inst,date);}
   else{blankState();srcTag.textContent=s?((s.chain?'chain loaded \u2014 awaiting greeks':'greeks loaded \u2014 awaiting chain')+' \u00b7 '+date):'no session loaded \u00b7 '+date;}}
@@ -479,9 +484,13 @@ grkFile.onchange=e=>{const f=e.target.files[0];if(!f)return;grkFn.textContent=f.
   readFile(f,t=>{const s=store(inst,date);s.greeks=parseGreeks(t);if(exp)s.exp=exp;s.date=date;afterLoad(inst,date);});};
 instSel.onchange=loadDate;
 dayDate.onchange=loadDate;
-anchorIn.oninput=()=>{const v=parseFloat(anchorIn.value);if(isFinite(v)){M.anchor=v;computeATM();syncSpot();recomputeSurface();}};
-anchorLock.onclick=()=>{anchorLocked=!anchorLocked;anchorLock.classList.toggle('on',anchorLocked);
-  anchorLock.textContent=anchorLocked?'\uD83D\uDD12':'\uD83D\uDD13';anchorLock.title=anchorLocked?'Anchor locked \u2014 click to unlock':'Lock anchor for the session';};
+anchorIn.oninput=()=>{const inst=instSel.value,date=activeDate();const cell=store(inst,date);const v=parseFloat(anchorIn.value);
+  if(isFinite(v)){cell.anchor=v;M.anchor=v;}else{cell.anchor=null;M.anchor=null;}
+  computeATM();syncSpot();recomputeSurface();};
+anchorLock.onclick=()=>{const inst=instSel.value,date=activeDate();const cell=store(inst,date);const v=parseFloat(anchorIn.value);
+  if(!anchorLocked){if(!isFinite(v))return;cell.anchor=v;cell.anchorLocked=true;M.anchor=v;anchorLocked=true;}
+  else{cell.anchorLocked=false;anchorLocked=false;}
+  setLockUI();};
 rfrEl.oninput=recomputeSurface;
 const _etClock=new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'});
 const _etFmt=new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',hour12:false,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit'});
